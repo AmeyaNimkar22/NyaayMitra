@@ -1,0 +1,24 @@
+# Python virtual environment
+backend/venv311/
+venv/
+.venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Environment variables / secrets
+.env
+*.env
+
+# Node dependencies
+node_modules/
+client/node_modules/
+
+# Build files
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
