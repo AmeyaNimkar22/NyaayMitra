@@ -22,51 +22,54 @@ The two Python backends use different Python, torch, numpy and FastAPI versions.
 
 ### Frontend
 ```powershell
-cd C:\Users\hp\NyaayMitra
+cd <project folder>
 pnpm install
 ```
 
-### Legal Advisor
-The code was copied from `Downloads\NyaayMitra2.0`. Its `.env` (secrets) and `.venv` were **not** copied.
+### Legal Advisor (Python 3.12)
+```powershell
+cd legal-advisor
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements-lock.txt
+copy .env.example .env      # then put YOUR Groq key after GROQ_API_KEY= (free at console.groq.com)
+cd ..
+```
+- The knowledge base (`data/raw`, `data/chunks`, `data/vectorstore`) is **not** in Git. Get `legal-advisor-data.zip` from the team and unzip it into `legal-advisor\data\` (so you have `data\raw`, `data\chunks`, `data\vectorstore`), **or** rebuild it from the PDFs in `data\raw`:
+  ```powershell
+  $env:NYAAYMITRA_MAX_CHUNK_CHARACTERS = "4000"
+  .\.venv\Scripts\python.exe -m backend.ingestion.run_ingestion
+  .\.venv\Scripts\python.exe -m backend.rag.build_index
+  ```
+- The first start downloads `sentence-transformers/all-MiniLM-L6-v2` and `cross-encoder/ms-marco-MiniLM-L-6-v2` from Hugging Face (needs internet once).
 
-1. Create the env file (never commit it — it is git-ignored):
-   ```powershell
-   copy C:\Users\hp\Downloads\NyaayMitra2.0\.env C:\Users\hp\NyaayMitra\legal-advisor\.env
-   ```
-2. Python environment — either:
-   - **Reuse the existing one** (no install needed): use `C:\Users\hp\Downloads\NyaayMitra2.0\.venv\Scripts\python.exe` in the start command below, or
-   - **Create a new one** inside `legal-advisor`:
-     ```powershell
-     cd C:\Users\hp\NyaayMitra\legal-advisor
-     py -3.12 -m venv .venv
-     .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-     ```
-3. The knowledge base (`data/chunks`, `data/vectorstore`) was copied with the code. These folders are git-ignored, so teammates cloning from GitHub must rebuild them:
-   `python -m backend.ingestion.run_ingestion` then `python -m backend.rag.build_index`.
-4. The first start downloads `sentence-transformers/all-MiniLM-L6-v2` and `cross-encoder/ms-marco-MiniLM-L-6-v2` from Hugging Face if they aren't already cached.
+### Scan & Learn (Python 3.11)
+```powershell
+cd backend
+py -3.11 -m venv venv311
+.\venv311\Scripts\python.exe -m pip install -r requirements.txt
+.\venv311\Scripts\python.exe -m pip install paddlepaddle==3.2.0   # worked on Windows where 3.3.1 did not
+copy .env.example .env      # then put the MongoDB connection string after MONGO_URI=
+cd ..
+```
 
-### Scan & Learn
-Unchanged. `backend\.env` needs `MONGO_URI`; venv is `backend\venv311`.
-
-## 2. Start everything (three terminals)
+## 2. Start everything (three terminals, from the project folder)
 
 **Terminal 1 – Legal Advisor (must be started from `legal-advisor/`, because it uses relative `data/` paths):**
 ```powershell
-cd C:\Users\hp\NyaayMitra\legal-advisor
-C:\Users\hp\Downloads\NyaayMitra2.0\.venv\Scripts\python.exe -m uvicorn backend.api:app --host 127.0.0.1 --port 8001
-# (or .\.venv\Scripts\python.exe … if you created a venv in step 1.2)
+cd legal-advisor
+.\.venv\Scripts\python.exe -m uvicorn backend.api:app --host 127.0.0.1 --port 8001
 ```
 Check: open http://127.0.0.1:8001/api/health → `{"status":"ok"}`. Startup takes a while (it loads the embedding model, reranker and Groq client).
 
 **Terminal 2 – Scan & Learn (needed for the Scan & Learn page):**
 ```powershell
-cd C:\Users\hp\NyaayMitra\backend
+cd backend
 .\venv311\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000
 ```
 
 **Terminal 3 – Frontend:**
 ```powershell
-cd C:\Users\hp\NyaayMitra
+cd <project folder>
 pnpm dev
 ```
 Open http://localhost:3000, log in (mock login: any email and password), then go to **Legal Advisor**.
