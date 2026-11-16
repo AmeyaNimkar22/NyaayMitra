@@ -39,6 +39,21 @@ export default defineConfig({
           });
         },
       },
+      // Scan & Learn backend (backend/, FastAPI + PaddleOCR + MobileNet + MongoDB).
+      // /api/scan/ocr -> http://127.0.0.1:8000/ocr
+      "/api/scan": {
+        target: process.env.SCAN_LEARN_URL || "http://127.0.0.1:8000",
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/api\/scan/, ""),
+        configure: (proxy) => {
+          proxy.on("error", (_err, _req, res) => {
+            if ("writeHead" in res && !res.headersSent) {
+              res.writeHead(503, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ detail: "Scan & Learn backend is not reachable." }));
+            }
+          });
+        },
+      },
     },
   },
 });

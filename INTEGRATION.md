@@ -5,7 +5,7 @@ One frontend, three modules, each backend in its own process so one failing does
 ```
 Browser ──► Vite dev server :3000  (client/, shared frontend)
              └─ /api/advisor/*  ──proxy──► Legal Advisor (legal-advisor/, FastAPI) :8001
-Scan & Learn backend (backend/, FastAPI)  :8000   – frontend still uses its mock (unchanged)
+             └─ /api/scan/*     ──proxy──► Scan & Learn (backend/, FastAPI)       :8000
 Games – frontend only, no backend
 ```
 
@@ -58,7 +58,7 @@ C:\Users\hp\Downloads\NyaayMitra2.0\.venv\Scripts\python.exe -m uvicorn backend.
 ```
 Check: open http://127.0.0.1:8001/api/health → `{"status":"ok"}`. Startup takes a while (it loads the embedding model, reranker and Groq client).
 
-**Terminal 2 – Scan & Learn (optional; the frontend doesn't call it yet):**
+**Terminal 2 – Scan & Learn (needed for the Scan & Learn page):**
 ```powershell
 cd C:\Users\hp\NyaayMitra\backend
 .\venv311\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000
@@ -84,6 +84,8 @@ Open http://localhost:3000, log in (mock login: any email and password), then go
 | shell env (optional) | `LEGAL_ADVISOR_URL` | `vite.config.ts` proxy target (default `http://127.0.0.1:8001`) | No |
 | root `.env` (optional) | `VITE_ADVISOR_API_BASE` | frontend base URL (default `/api/advisor`, via the proxy) | No |
 | root `.env` (optional) | `VITE_ADVISOR_USE_MOCK=true` | turns the old demo answers back on, for offline UI work only | No |
+| shell env (optional) | `SCAN_LEARN_URL` | `vite.config.ts` proxy target for Scan & Learn (default `http://127.0.0.1:8000`) | No |
+| root `.env` (optional) | `VITE_SCAN_USE_MOCK=true` | shows the old fixed Scan & Learn demo guide, for offline UI work only | No |
 
 ## 4. Legal Advisor API contract
 
@@ -101,3 +103,9 @@ The frontend adapter is `toGuidance()` in `client/src/lib/civicAdvisorService.ts
 - **`RuntimeError: GROQ_API_KEY is not set`** – `legal-advisor\.env` is missing.
 - **Empty or blocked answers** – check that `legal-advisor\data\vectorstore\chroma.sqlite3` and `data\chunks\*.json` exist.
 - **Clear saved answers** – stop the Legal Advisor backend and delete `legal-advisor\data\answer_cache\`. It is also reset automatically when the knowledge base (`data/chunks`) changes.
+
+## 6. Scan & Learn notes
+
+- The page uploads the photo to `POST /api/scan/ocr` (proxied to `backend/main.py` `/ocr`). The backend runs PaddleOCR, then the keyword classifier or the MobileNet model, then reads the guidance from MongoDB (`CivicGuidesDB.civic_knowledge`). The adapter is `toPlaceGuide()` in `client/src/lib/scanLearnService.ts`.
+- **MongoDB Atlas only accepts IPs on its Network Access list.** An `SSL handshake failed … TLSV1_ALERT_INTERNAL_ERROR` error means your IP is not on it. On IPv6-only networks (e.g. Jio, which use NAT64) your visible IP is not the one Atlas sees, so add `0.0.0.0/0` for development. Test with: `python -c "from database import client; print(client.admin.command('ping'))"` inside `backend/`.
+- If Windows shows "An Application Control policy has blocked this file", Smart App Control is blocking part of the Python environment; allow it or create a fresh venv. `paddlepaddle==3.2.0` worked on Windows where `3.3.1` did not.

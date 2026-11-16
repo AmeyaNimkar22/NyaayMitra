@@ -31,7 +31,7 @@ export default function ScanLearn() {
             </h1>
             <p className="text-sm sm:text-base text-muted-foreground mt-1">
               Point your camera at any public institution, civic establishment, or administrative
-              desk to discover your rights, responsibilities, and what to avoid there.
+              desk to discover relevant information from our verified knowledge database.
             </p>
           </div>
 
