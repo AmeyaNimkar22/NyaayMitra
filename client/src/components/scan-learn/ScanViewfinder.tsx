@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { Camera, ImageUp, ShieldCheck } from "lucide-react";
-import { identifyPlace, type PlaceGuide } from "@/lib/scanLearnService";
+import { errorPlaceGuide, identifyPlace, ScanRequestError, type PlaceGuide } from "@/lib/scanLearnService";
 
 interface ScanViewfinderProps {
   onResult: (guide: PlaceGuide | null) => void;
@@ -22,9 +22,17 @@ export default function ScanViewfinder({ onResult }: ScanViewfinderProps) {
     onResult(null);
     setIsIdentifying(true);
 
-    const guide = await identifyPlace(file);
+    let guide: PlaceGuide;
+    try {
+      guide = await identifyPlace(file);
+    } catch (err) {
+      guide = errorPlaceGuide(
+        err instanceof ScanRequestError ? err.message : "Something went wrong while scanning. Please try again.",
+      );
+    } finally {
+      setIsIdentifying(false);
+    }
 
-    setIsIdentifying(false);
     setPlaceName(guide.placeName);
     setPlaceSubtitle(guide.placeSubtitle);
     onResult(guide);
@@ -71,8 +79,8 @@ export default function ScanViewfinder({ onResult }: ScanViewfinderProps) {
                 <div className="flex items-center gap-2">
                   <ShieldCheck size={20} className="text-primary shrink-0" />
                   <div className="flex flex-col min-w-0">
+                    {placeSubtitle && <span className="text-[11px] text-muted-foreground truncate">{placeSubtitle}</span>}
                     <span className="text-sm font-semibold text-foreground truncate">{placeName}</span>
-                    <span className="text-xs text-muted-foreground truncate">{placeSubtitle}</span>
                   </div>
                 </div>
               </div>
@@ -108,7 +116,7 @@ export default function ScanViewfinder({ onResult }: ScanViewfinderProps) {
       <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-accent/40 text-muted-foreground text-xs">
         <span className="flex items-center gap-1.5">
           <ShieldCheck size={14} className="text-primary" />
-          On-device, anonymous processing
+          Image processed through the backend server
         </span>
       </div>
 

@@ -1,14 +1,15 @@
 /**
- * CIVIC ADVISOR SERVICE — MOCK IMPLEMENTATION
- * --------------------------------------------
- * There is no real RAG pipeline, LLM, or vector database wired up in this
- * project yet. This file exists so the UI has one clean seam to call
- * through, instead of components inventing guidance content themselves.
+ * LEGAL ADVISOR SERVICE
+ * ---------------------
+ * `askCivicAdvisor` sends the user's question to the integrated Legal Advisor
+ * RAG backend (legal-advisor/, FastAPI `POST /api/advisor/ask`) and adapts its
+ * response into the `AdvisorGuidance` shape the UI renders.
  *
- * When a real backend exists, replace the body of `askCivicAdvisor` with
- * a fetch() to something like `POST /api/advisor/ask`, keep the
- * `AdvisorGuidance` shape (or update it and `GuidanceResponse.tsx`
- * together), and nothing else in the UI needs to change.
+ * - Base URL: `VITE_ADVISOR_API_BASE` (default "/api/advisor", proxied by Vite
+ *   to the Legal Advisor backend on port 8001 — see vite.config.ts).
+ * - The original keyword-based demo answers are kept below and are used ONLY
+ *   when `VITE_ADVISOR_USE_MOCK=true` is set explicitly (offline UI demos).
+ *   They are never used as a silent fallback when the backend fails.
  */
 
 export interface AdvisorRight {
@@ -21,6 +22,13 @@ export interface AdvisorStep {
   body: string;
 }
 
+export interface AdvisorSource {
+  sourceFile: string;
+  sections: string;
+  page?: string;
+  chunkId?: string;
+}
+
 export interface AdvisorGuidance {
   /** Short label shown in the response header, e.g. "Tenancy Frameworks & TPA" */
   contextLabel: string;
@@ -30,6 +38,19 @@ export interface AdvisorGuidance {
   learnMoreLabel: string;
   sourceSummary: string;
   sourceDetail: string;
+
+  // ---- Optional fields filled in by the real Legal Advisor backend ----
+  /** Backend status, e.g. SUPPORTED, PARTIALLY_SUPPORTED, NO_RELEVANT_SOURCE. */
+  status?: string;
+  applicableLaw?: AdvisorRight[];
+  responsibilities?: string[];
+  evidenceChecklist?: string[];
+  authorities?: string[];
+  importantNote?: string;
+  limitations?: string[];
+  sources?: AdvisorSource[];
+  /** Set when the backend declined to answer (no verified evidence) or failed. */
+  notice?: { kind: "blocked" | "error"; message: string };
 }
 
 export interface AdvisorMessage {
@@ -182,10 +203,217 @@ function matchGuidance(question: string): AdvisorGuidance {
   return DEFAULT_GUIDANCE;
 }
 
-/** Simulates a RAG-backed civic advisor call. Replace with a real API call later. */
+// ---------------------------------------------------------------------------
+// Real backend integration
+// ---------------------------------------------------------------------------
+
+const ADVISOR_API_BASE: string =
+  (import.meta.env.VITE_ADVISOR_API_BASE as string | undefined)?.replace(/\/$/, "") || "/api/advisor";
+
+const USE_MOCK = import.meta.env.VITE_ADVISOR_USE_MOCK === "true";
+
+/** The RAG pipeline makes several LLM calls; allow it time but never hang forever. */
+const REQUEST_TIMEOUT_MS = 180_000;
+
+const ANSWER_STATUSES = new Set(["SUPPORTED", "PARTIALLY_SUPPORTED"]);
+
+const BLOCKED_MESSAGES: Record<string, string> = {
+  NO_RELEVANT_SOURCE:
+    "I couldn't find a sufficiently relevant verified legal source for this question, so I won't guess. Try describing your situation with more detail (what happened, where, and who was involved).",
+  INSUFFICIENT_INFORMATION:
+    "The verified sources I found don't contain enough information to answer this safely. Try adding more detail about your situation.",
+  INVALID_INPUT: "Please describe your situation.",
+};
+
+export class AdvisorRequestError extends Error {}
+
+function asText(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) return value.map(asText).filter(Boolean).join(", ");
+  if (typeof value === "object") {
+    return Object.values(value as Record<string, unknown>).map(asText).filter(Boolean).join(" — ");
+  }
+  return "";
+}
+
+function asTextList(value: unknown): string[] {
+  if (!Array.isArray(value)) return value ? [asText(value)].filter(Boolean) : [];
+  return value.map(asText).filter(Boolean);
+}
+
+/** Strings become {title:"", body}; objects with title-like keys keep them. */
+function asTitledList(value: unknown): AdvisorRight[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item): AdvisorRight => {
+      if (item && typeof item === "object" && !Array.isArray(item)) {
+        const obj = item as Record<string, unknown>;
+        const title = asText(obj.title ?? obj.right ?? obj.step ?? obj.name ?? "");
+        const rest = { ...obj };
+        delete rest.title; delete rest.right; delete rest.step; delete rest.name;
+        return { title, body: asText(obj.body ?? obj.description ?? obj.detail ?? rest) };
+      }
+      return { title: "", body: asText(item) };
+    })
+    .filter((r) => r.title || r.body);
+}
+
+function toSources(value: unknown): AdvisorSource[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((s) => s && typeof s === "object")
+    .map((s) => {
+      const src = s as Record<string, unknown>;
+      return {
+        sourceFile: asText(src.source_file) || "Verified source",
+        sections: asText(src.section_numbers),
+        page: asText(src.page ?? src.pages) || undefined,
+        chunkId: asText(src.chunk_id) || undefined,
+      };
+    });
+}
+
+function describeSources(sources: AdvisorSource[]): { summary: string; detail: string } {
+  if (sources.length === 0) {
+    return { summary: "No sources returned", detail: "The backend did not return any source references." };
+  }
+  const files = Array.from(new Set(sources.map((s) => s.sourceFile.replace(/\.(pdf|docx?|txt|csv|xlsx)$/i, ""))));
+  return {
+    summary: `Sources & references (${files.join(", ")})`,
+    detail: sources
+      .map((s) => [s.sourceFile, s.sections && `Section(s) ${s.sections}`, s.page && `p. ${s.page}`].filter(Boolean).join(" · "))
+      .join("\n"),
+  };
+}
+
+/**
+ * Adapter: Legal Advisor backend response -> AdvisorGuidance.
+ * Exported so it can be unit-tested without a running backend.
+ */
+export function toGuidance(raw: unknown): AdvisorGuidance {
+  const data = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const status = asText(data.status).toUpperCase() || "UNKNOWN";
+  const sources = toSources(data.sources);
+  const { summary: sourceSummary, detail: sourceDetail } = describeSources(sources);
+  const legalAreas = asTextList(data.legal_area);
+
+  const base: AdvisorGuidance = {
+    status,
+    contextLabel: legalAreas.join(" · ") || "Legal guidance",
+    summary: asText(data.situation),
+    rights: asTitledList(data.rights),
+    nextSteps: asTitledList(data.recommended_next_steps ?? data.next_steps),
+    applicableLaw: Array.isArray(data.applicable_law)
+      ? (data.applicable_law as unknown[]).map((law) => {
+          if (law && typeof law === "object") {
+            const l = law as Record<string, unknown>;
+            const provision = asText(l.provision);
+            return {
+              title: [asText(l.law_name), provision && provision !== "Not specified in retrieved evidence" ? provision : ""]
+                .filter(Boolean)
+                .join(", "),
+              body: [asText(l.explanation), asText(l.relevance)].filter(Boolean).join(" "),
+            };
+          }
+          return { title: asText(law), body: "" };
+        }).filter((l) => l.title || l.body)
+      : [],
+    responsibilities: asTextList(data.responsibilities),
+    evidenceChecklist: asTextList(data.evidence_checklist ?? data.evidence),
+    authorities: asTextList(data.authority),
+    importantNote: asText(data.important_note),
+    limitations: asTextList(data.limitations),
+    learnMoreLabel: "",
+    sources,
+    sourceSummary,
+    sourceDetail,
+  };
+
+  if (!ANSWER_STATUSES.has(status)) {
+    const backendMessage = asText(data.error);
+    const isError = !(status in BLOCKED_MESSAGES);
+    base.notice = {
+      kind: isError ? "error" : "blocked",
+      message: isError
+        ? `The Legal Advisor could not complete this request (${status}).${backendMessage ? " " + backendMessage : ""} Please try again.`
+        : BLOCKED_MESSAGES[status],
+    };
+  }
+
+  return base;
+}
+
 export async function askCivicAdvisor(question: string): Promise<AdvisorGuidance> {
-  await new Promise((resolve) => setTimeout(resolve, 900));
-  return matchGuidance(question);
+  if (USE_MOCK) {
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    return matchGuidance(question);
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  let response: Response;
+  try {
+    response = await fetch(`${ADVISOR_API_BASE}/ask`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: question }),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if ((err as Error).name === "AbortError") {
+      throw new AdvisorRequestError("The Legal Advisor took too long to respond. Please try again.");
+    }
+    throw new AdvisorRequestError(
+      "Couldn't reach the Legal Advisor service. Make sure the Legal Advisor backend is running (port 8001).",
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (response.status === 502 || response.status === 503 || response.status === 504) {
+    throw new AdvisorRequestError(
+      "The Legal Advisor service is not available right now. Make sure the Legal Advisor backend is running (port 8001), then try again.",
+    );
+  }
+
+  if (!response.ok) {
+    let detail = "";
+    try {
+      const body = await response.json();
+      detail = asText((body as Record<string, unknown>)?.detail);
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new AdvisorRequestError(
+      `The Legal Advisor returned an error (HTTP ${response.status}).${detail ? " " + detail : ""}`,
+    );
+  }
+
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new AdvisorRequestError("The Legal Advisor returned a response that could not be read.");
+  }
+  return toGuidance(payload);
+}
+
+/** Guidance object used to show a request failure inside the chat. */
+export function errorGuidance(message: string): AdvisorGuidance {
+  return {
+    status: "REQUEST_ERROR",
+    contextLabel: "Legal Advisor",
+    summary: "",
+    rights: [],
+    nextSteps: [],
+    learnMoreLabel: "",
+    sourceSummary: "",
+    sourceDetail: "",
+    notice: { kind: "error", message },
+  };
 }
 
 export const topicToQuestion: Record<string, string> = {
