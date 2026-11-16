@@ -17,7 +17,7 @@ export default function SituationInput({ value, onChange, onSend, disabled }: Si
   }
 
   return (
-    <div className="sticky bottom-4 z-10 pt-4">
+    <div className="sticky bottom-0 z-10 pt-4 pb-4 bg-background before:content-[''] before:absolute before:inset-x-0 before:-top-8 before:h-8 before:pointer-events-none before:bg-linear-to-t before:from-background before:to-transparent">
       <div className="bg-card border border-border rounded-3xl p-2.5 shadow-lg focus-within:ring-2 focus-within:ring-primary/25 transition-all">
         <label className="sr-only" htmlFor="citizenAdvisorInput">
           Describe your situation
@@ -62,7 +62,7 @@ export default function SituationInput({ value, onChange, onSend, disabled }: Si
         </div>
       </div>
       <p className="text-center text-[12px] text-muted-foreground mt-2.5 leading-snug px-4">
-        NyaayMitra provides general legal and civic awareness. It is not a substitute for formal
+        NyaayMitra provides general legal awareness. It is not a substitute for formal
         legal representation or advocate-client advice.
       </p>
     </div>

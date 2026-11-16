@@ -22,5 +22,23 @@ export default defineConfig({
     port: 3000,
     strictPort: false, // Will find next available port if 3000 is busy
     host: true,
+    proxy: {
+      // Legal Advisor RAG backend (legal-advisor/, FastAPI). Each module's
+      // backend runs as its own process so one failing doesn't break others.
+      "/api/advisor": {
+        target: process.env.LEGAL_ADVISOR_URL || "http://127.0.0.1:8001",
+        changeOrigin: true,
+        // If the Legal Advisor backend is not running, answer 503 (instead of
+        // Vite's generic 500) so the UI can show a "service unavailable" message.
+        configure: (proxy) => {
+          proxy.on("error", (_err, _req, res) => {
+            if ("writeHead" in res && !res.headersSent) {
+              res.writeHead(503, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ detail: "Legal Advisor backend is not reachable." }));
+            }
+          });
+        },
+      },
+    },
   },
 });
