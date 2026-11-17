@@ -1,14 +1,16 @@
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from backend.rag.advisor_pipeline import AdvisorPipeline
 import threading
 
 from backend.answer_cache import AnswerCache, completeness, find_embedder, is_complete
+from backend.source_links import add_source_links, resolve_source_document
 
 
 app = FastAPI(title="NyaayMitra API")
@@ -71,7 +73,7 @@ def ask_advisor(request: AskRequest):
 
     cached, vector = answer_cache.lookup(query)
     if cached is not None:
-        return cached
+        return add_source_links(cached)
 
     answer = pipeline.analyze(query)
 
@@ -86,4 +88,25 @@ def ask_advisor(request: AskRequest):
             print(f"[answer-cache] retry failed: {exc}")
 
     answer_cache.store(query, vector, answer)
-    return answer
+    return add_source_links(answer)
+
+
+@app.get("/api/advisor/source-document/{document_id}")
+def source_document(document_id: str):
+    """Open a cited source document from data/raw in the browser.
+    PDF links from add_source_links() end with #page=N to open that page."""
+    found = resolve_source_document(document_id)
+    if found is None:
+        raise HTTPException(status_code=404, detail="Source document not found.")
+    path, media_type = found
+    headers = {"X-Content-Type-Options": "nosniff"}
+    if media_type.startswith("text/html"):
+        # Saved web pages are shown as documents only: no scripts, no forms.
+        headers["Content-Security-Policy"] = "sandbox"
+    return FileResponse(
+        path,
+        media_type=media_type,
+        filename=path.name,
+        content_disposition_type="inline",
+        headers=headers,
+    )

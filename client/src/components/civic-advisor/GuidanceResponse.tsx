@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { AlertTriangle, ArrowRight, Bookmark, Check, ChevronDown, Scale } from "lucide-react";
-import type { AdvisorGuidance } from "@/lib/civicAdvisorService";
+import { AlertTriangle, ArrowRight, Bookmark, Check, ChevronDown, ExternalLink, Scale } from "lucide-react";
+import type { AdvisorGuidance, AdvisorSource } from "@/lib/civicAdvisorService";
 
 /** Shown under a heading when the verified sources don't cover that section. */
 const NOT_STATED = "Not stated in the verified legal sources for this question.";
@@ -27,6 +27,51 @@ function BulletSection({ title, items, alwaysShow }: { title: string; items?: st
       ) : (
         <EmptyNote />
       )}
+    </section>
+  );
+}
+
+/** One link per cited document + page, in the order the backend ranked the sources. */
+function SourceDocumentLinks({ sources }: { sources?: AdvisorSource[] }) {
+  const seen = new Set<string>();
+  const links = (sources ?? []).filter((s) => {
+    if (!s.url || seen.has(s.url)) return false;
+    seen.add(s.url);
+    return true;
+  });
+  if (links.length === 0) return null;
+  return (
+    <section className="mb-5 text-left">
+      <h2 className="text-lg font-semibold text-foreground mb-2.5 flex items-center gap-2">
+        <span className="w-1.5 h-1.5 rounded-full bg-primary" />
+        View in source documents
+      </h2>
+      <ul className="space-y-1.5 text-sm">
+        {links.map((s) => {
+          const name = (s.title || s.sourceFile).replace(/_+/g, " ").trim();
+          const pages = s.pageStart
+            ? s.pageEnd && s.pageEnd !== s.pageStart
+              ? `pages ${s.pageStart}–${s.pageEnd}`
+              : `page ${s.pageStart}`
+            : "";
+          return (
+            <li key={s.url}>
+              <a
+                href={s.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-primary hover:underline"
+              >
+                <ExternalLink size={14} className="shrink-0" />
+                <span>
+                  {name}
+                  {pages && <span className="text-muted-foreground"> · {pages}</span>}
+                </span>
+              </a>
+            </li>
+          );
+        })}
+      </ul>
     </section>
   );
 }
@@ -160,6 +205,8 @@ export default function GuidanceResponse({ guidance }: { guidance: AdvisorGuidan
         {guidance.importantNote && (
           <p className="mb-5 text-xs text-muted-foreground leading-relaxed text-left italic">{guidance.importantNote}</p>
         )}
+
+        {showAll && <SourceDocumentLinks sources={guidance.sources} />}
 
         {(guidance.learnMoreLabel || guidance.sourceSummary) && (
         <div className="pt-3 border-t border-border flex flex-wrap items-center justify-between gap-3 text-sm">

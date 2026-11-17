@@ -27,6 +27,14 @@ export interface AdvisorSource {
   sections: string;
   page?: string;
   chunkId?: string;
+  /** Link that opens the original document (PDFs at the cited page, via #page=N). */
+  url?: string;
+  /** Original document name, e.g. "Consumer_Protection_Act_2019". */
+  title?: string;
+  /** e.g. "pdf", "docx", "html". */
+  fileType?: string;
+  pageStart?: number;
+  pageEnd?: number;
 }
 
 export interface AdvisorGuidance {
@@ -271,6 +279,11 @@ function toSources(value: unknown): AdvisorSource[] {
         sections: asText(src.section_numbers),
         page: asText(src.page ?? src.pages) || undefined,
         chunkId: asText(src.chunk_id) || undefined,
+        url: asText(src.url) || undefined,
+        title: asText(src.document_title) || undefined,
+        fileType: asText(src.file_type) || undefined,
+        pageStart: typeof src.page_start === "number" ? src.page_start : undefined,
+        pageEnd: typeof src.page_end === "number" ? src.page_end : undefined,
       };
     });
 }
